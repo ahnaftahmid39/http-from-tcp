@@ -6,18 +6,23 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/ahnaftahmid39/http-from-tcp/internal/constants"
+	"github.com/ahnaftahmid39/http-from-tcp/internal/headers"
 )
 
 type requestState int
 
 const (
-	initialized requestState = iota
-	done
+	requestStateInitialized requestState = iota
+	requestStateParsingHeaders
+	requestStateDone
 )
 
 type Request struct {
 	state       requestState
 	RequestLine RequestLine
+	Headers     headers.Headers
 }
 
 type RequestLine struct {
@@ -26,11 +31,32 @@ type RequestLine struct {
 	Method        string
 }
 
-const crlf = "\r\n"
-const bufferSize = 8
+func NewRequest() *Request {
+	return &Request{
+		state:       requestStateInitialized,
+		RequestLine: RequestLine{},
+		Headers:     headers.NewHeaders(),
+	}
+}
 
 func (r *Request) parse(data []byte) (int, error) {
-	if r.state == initialized {
+	totalBytesParsed := 0
+	for r.state != requestStateDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return totalBytesParsed, err
+		}
+		if n == 0 {
+			break
+		}
+		totalBytesParsed += n
+	}
+	return totalBytesParsed, nil
+}
+
+
+func (r *Request) parseSingle(data []byte) (int, error) {
+	if r.state == requestStateInitialized {
 		reqLine, n, err := parseRequestLine(data)
 		if err != nil {
 			return 0, err
@@ -39,24 +65,32 @@ func (r *Request) parse(data []byte) (int, error) {
 			return 0, nil
 		}
 		r.RequestLine = *reqLine
-		r.state = done
+		r.state = requestStateParsingHeaders
 		return n, nil
 	}
-	if r.state == done {
+	if r.state == requestStateParsingHeaders {
+		n, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return n, err
+		}
+		if done {
+			r.state = requestStateDone
+		}
+		return n, nil
+	}
+	if r.state == requestStateDone {
 		return 0, fmt.Errorf("error: trying to read data in a done state")
 	}
-	return 0, fmt.Errorf("error: unknown state")
+	return 0, fmt.Errorf("error: unknown state %v", r.state)
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	buf := make([]byte, bufferSize)
+	buf := make([]byte, constants.BUFFER_SIZE)
 	readToIndex := 0
 
-	req := &Request{
-		state: initialized,
-	}
+	req := NewRequest()
 
-	for req.state != done {
+	for req.state != requestStateDone {
 		if readToIndex == len(buf) {
 			newBuf := make([]byte, len(buf)*2)
 			copy(newBuf, buf)
@@ -68,7 +102,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				req.state = done
+				req.state = requestStateDone
 				break
 			}
 			return nil, err
@@ -86,7 +120,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 }
 
 func parseRequestLine(data []byte) (*RequestLine, int, error) {
-	idx := bytes.Index(data, []byte(crlf))
+	idx := bytes.Index(data, []byte(constants.CRLF))
 	if idx == -1 {
 		return nil, 0, nil
 	}
@@ -95,7 +129,7 @@ func parseRequestLine(data []byte) (*RequestLine, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	return requestLine, idx + len(crlf), nil
+	return requestLine, idx + len(constants.CRLF), nil
 }
 
 func requestLineFromString(str string) (*RequestLine, error) {
