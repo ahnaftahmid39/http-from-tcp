@@ -37,6 +37,9 @@ func main() {
 			for key, val := range req.Headers {
 				fmt.Fprintf(os.Stdout, "- %s: %s\n", key, val)
 			}
+
+			fmt.Fprintln(os.Stdout, "Body:")
+			fmt.Fprintln(os.Stdout, string(req.Body))
 			conn.Close()
 			// fmt.Fprintln(os.Stdout, "Connection to", conn.RemoteAddr(), "has been closed")
 		}()

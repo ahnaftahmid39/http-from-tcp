@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/ahnaftahmid39/http-from-tcp/internal/constants"
@@ -16,13 +17,17 @@ type requestState int
 const (
 	requestStateInitialized requestState = iota
 	requestStateParsingHeaders
+	requestStateParsingBody
 	requestStateDone
 )
 
 type Request struct {
-	state       requestState
-	RequestLine RequestLine
-	Headers     headers.Headers
+	state requestState
+	// if contentLength is -1 then it means Content-Length header is not present
+	contentLength int
+	RequestLine   RequestLine
+	Headers       headers.Headers
+	Body          []byte
 }
 
 type RequestLine struct {
@@ -36,6 +41,7 @@ func NewRequest() *Request {
 		state:       requestStateInitialized,
 		RequestLine: RequestLine{},
 		Headers:     headers.NewHeaders(),
+		Body:        nil,
 	}
 }
 
@@ -53,7 +59,6 @@ func (r *Request) parse(data []byte) (int, error) {
 	}
 	return totalBytesParsed, nil
 }
-
 
 func (r *Request) parseSingle(data []byte) (int, error) {
 	if r.state == requestStateInitialized {
@@ -74,9 +79,33 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 			return n, err
 		}
 		if done {
-			r.state = requestStateDone
+			r.state = requestStateParsingBody
 		}
 		return n, nil
+	}
+	if r.state == requestStateParsingBody {
+		if r.Body == nil {
+			r.Body = make([]byte, 0)
+			contentLengthHeader := r.Headers.Get("Content-Length")
+			if contentLengthHeader == "" {
+				r.contentLength = 0
+			} else {
+				contentLength, err := strconv.Atoi(contentLengthHeader)
+				if err != nil {
+					return 0, fmt.Errorf("error: content length header invalid value, %v", err)
+				}
+				r.contentLength = contentLength
+			}
+		}
+		if r.contentLength == 0 {
+			r.state = requestStateDone
+			return len(data), nil
+		}
+		r.Body = append(r.Body, data...)
+		if len(r.Body) > r.contentLength {
+			return len(data), fmt.Errorf("error: body length is more than specified content-length")
+		}
+		return len(data), nil
 	}
 	if r.state == requestStateDone {
 		return 0, fmt.Errorf("error: trying to read data in a done state")
@@ -99,12 +128,14 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		n, err := reader.Read(buf[readToIndex:])
 		readToIndex += n
-
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				req.state = requestStateDone
-				break
+		if err != nil && errors.Is(err, io.EOF) {
+			if req.contentLength != len(req.Body) {
+				return nil, fmt.Errorf("error: content-length != len(req.Body), %v != %v respectively", req.contentLength, len(req.Body))
 			}
+			req.state = requestStateDone
+			break
+		}
+		if err != nil {
 			return nil, err
 		}
 		np, err := req.parse(buf[:readToIndex])

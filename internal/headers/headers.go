@@ -80,7 +80,7 @@ func (h Headers) Set(key, val string) {
 }
 
 func (h Headers) Get(key string) string {
-	return h[key]
+	return h[strings.ToLower(key)]
 }
 
 func NewHeaders() Headers {
