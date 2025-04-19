@@ -71,12 +71,17 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 }
 
 func (h Headers) Set(key, val string) {
+	keyLowered := strings.ToLower(key)
 	// If already exists, append it with comma separated
-	if existing, ok := h[key]; ok {
-		h[key] = strings.Join([]string{existing, val}, ", ")
+	if existing, ok := h[keyLowered]; ok {
+		h[keyLowered] = strings.Join([]string{existing, val}, ", ")
 	} else {
-		h[key] = val
+		h[keyLowered] = val
 	}
+}
+
+func (h Headers) Override(key, val string) {
+	h[strings.ToLower(key)] = val
 }
 
 func (h Headers) Get(key string) string {

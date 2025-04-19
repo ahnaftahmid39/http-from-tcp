@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -44,28 +43,18 @@ func (s *Server) listen() {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
+	res := &response.Writer{
+		Writer: conn,
+	}
 	req, err := request.RequestFromReader(conn)
 	if err != nil {
-		hErr := &HandlerError{
-			StatusCode: response.StatusBadRequest,
-			Message:    err.Error(),
-		}
-		hErr.Write(conn)
+		res.WriteStatusLine(400)
+		res.WriteHeaders(response.GetDefaultHeaders(len(err.Error())))
+		res.WriteBody([]byte(err.Error()))
 		return
 	}
 
-	buffer := bytes.NewBuffer([]byte{})
-	hErr := s.handler(buffer, req)
-	if hErr != nil {
-		hErr.Write(conn)
-		return
-	}
-
-	b := buffer.Bytes()
-	response.WriteStatusLine(conn, response.StatusOk)
-	response.WriteHeaders(conn, response.GetDefaultHeaders(len(b)))
-	conn.Write(b)
-
+	s.handler(res, req)
 }
 
 func Serve(port int, handler Handler) (*Server, error) {
